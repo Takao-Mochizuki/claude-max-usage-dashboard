@@ -18,6 +18,7 @@ For users running 2+ Claude Max accounts. Compare session remaining, weekly usag
 - リセットまでのカウントダウン / Reset countdown
 - 60秒ごとの自動更新 / Auto-refresh every 60s
 - 依存パッケージなし、Node.jsだけで動く / Zero dependencies, just Node.js
+- localhost限定 + CSRF保護 / localhost-only + CSRF protection
 
 ---
 
@@ -151,6 +152,27 @@ Monitor up to 9 accounts simultaneously for team-wide visibility.
 `setup-token` 方式でClaude APIをSaaSに組み込んでいる場合、開発中の使用量がサブスクの枠にどれだけ影響しているかをリアルタイムで確認できる。
 
 Track how your SaaS development API calls impact your subscription quota in real time.
+
+---
+
+## セキュリティ設計 / Security Design
+
+このダッシュボードは以下の保護を実装している：
+
+This dashboard implements the following protections:
+
+- **localhost限定**: `127.0.0.1` にのみバインド。LAN上の他デバイスからアクセス不可
+  Binds to `127.0.0.1` only. Not accessible from other devices on the network.
+- **POST + CSRFトークン**: `/api/usage` はPOSTのみ受け付け、サーバー起動時に生成されるランダムトークンをヘッダーで検証。外部サイトからの不正呼び出しを防止
+  `/api/usage` accepts POST only with a per-session CSRF token in `x-dashboard-csrf` header. Prevents cross-origin abuse.
+- **Origin検証**: Origin/Hostヘッダーがlocalhostでない場合はリクエストを拒否
+  Rejects requests with non-localhost Origin header.
+- **orgId非公開**: AnthropicのOrganization IDはレスポンスに含めない
+  Anthropic Organization ID is not included in API responses.
+- **エラーサニタイズ**: APIエラーのレスポンス本文を返さない（トークン漏洩防止）
+  Raw API error bodies are never returned to the client.
+- **XSS防止**: 全ての動的文字列はHTMLエスケープ済み
+  All dynamic strings are HTML-escaped before DOM insertion.
 
 ---
 

@@ -4,12 +4,14 @@
 // Usage: node server.mjs
 
 import { createServer } from "http";
+import { randomBytes } from "crypto";
 import { readFileSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 18800;
+const CSRF_TOKEN = randomBytes(32).toString("hex");
 
 // Load .env file
 function loadEnv() {
@@ -62,15 +64,12 @@ async function fetchUsage(token) {
   });
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    return { error: true, status: res.status, message: body };
+    return { error: true, status: res.status };
   }
 
   const headers = {};
   for (const [k, v] of res.headers.entries()) {
-    if (k.startsWith("anthropic-ratelimit") || k === "anthropic-organization-id") {
-      headers[k] = v;
-    }
+    if (k.startsWith("anthropic-ratelimit")) headers[k] = v;
   }
   return { error: false, headers };
 }
@@ -105,9 +104,30 @@ function parseUsage(headers) {
   };
 }
 
+function verifyRequest(req) {
+  // CSRF token check
+  if (req.headers["x-dashboard-csrf"] !== CSRF_TOKEN) return false;
+  // Origin / Host check — only allow requests from this server
+  const origin = req.headers["origin"];
+  if (origin && !origin.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/)) return false;
+  return true;
+}
+
 const server = createServer(async (req, res) => {
   if (req.url === "/api/usage") {
     res.setHeader("Content-Type", "application/json");
+
+    if (req.method !== "POST") {
+      res.statusCode = 405;
+      res.end(JSON.stringify({ error: "Method not allowed" }));
+      return;
+    }
+    if (!verifyRequest(req)) {
+      res.statusCode = 403;
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+
     const accounts = getAccounts();
     if (accounts.length === 0) {
       res.statusCode = 500;
@@ -129,7 +149,7 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify(results));
     } catch (e) {
       res.statusCode = 500;
-      res.end(JSON.stringify({ error: e.message }));
+      res.end(JSON.stringify({ error: "Internal server error" }));
     }
     return;
   }
@@ -141,7 +161,9 @@ const server = createServer(async (req, res) => {
     return;
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(readFileSync(join(__dirname, "index.html"), "utf-8"));
+  const html = readFileSync(join(__dirname, "index.html"), "utf-8")
+    .replace("__CSRF_TOKEN__", CSRF_TOKEN);
+  res.end(html);
 });
 
 server.listen(PORT, "127.0.0.1", () => {
