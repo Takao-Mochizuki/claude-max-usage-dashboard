@@ -17,7 +17,7 @@ If you run multiple Claude Max accounts (e.g. one for daily conversations, one f
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USER/claude-max-usage-dashboard.git
+git clone https://github.com/Takao-Mochizuki/claude-max-usage-dashboard.git
 cd claude-max-usage-dashboard
 cp .env.example .env
 ```
