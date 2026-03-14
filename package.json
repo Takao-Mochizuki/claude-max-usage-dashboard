@@ -1,0 +1,12 @@
+{
+  "name": "claude-max-usage-dashboard",
+  "version": "1.0.0",
+  "description": "Monitor Claude Max usage across multiple accounts in real time",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "keywords": ["claude", "anthropic", "usage", "dashboard", "claude-max"],
+  "license": "MIT"
+}

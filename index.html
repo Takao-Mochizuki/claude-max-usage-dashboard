@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Max Usage Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e4e4e7;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .header { text-align: center; margin-bottom: 32px; }
+  .header h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  .header .sub { font-size: 13px; color: #71717a; margin-bottom: 8px; }
+  .header .updated { font-size: 13px; color: #71717a; }
+  .header .updated .time { color: #a1a1aa; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  @media (max-width: 500px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .card-title { font-size: 18px; font-weight: 600; }
+  .colors { --c1: #3b82f6; --c2: #8b5cf6; --c3: #f59e0b; --c4: #10b981; --c5: #ec4899; }
+  .badge {
+    font-size: 11px; padding: 3px 8px; border-radius: 9999px; font-weight: 500;
+  }
+  .badge-ok { background: #052e16; color: #4ade80; }
+  .badge-warn { background: #422006; color: #fbbf24; }
+  .badge-error { background: #450a0a; color: #f87171; }
+  .section { margin-bottom: 18px; }
+  .section:last-child { margin-bottom: 0; }
+  .section-header {
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;
+  }
+  .section-title { font-size: 14px; font-weight: 600; color: #d4d4d8; }
+  .section-meta { font-size: 12px; color: #71717a; }
+  .bar-bg {
+    width: 100%; height: 8px; background: #27272a; border-radius: 4px; overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 4px; transition: width 0.6s ease;
+  }
+  .bar-fill.warn { background: #f59e0b !important; }
+  .bar-fill.danger { background: #ef4444 !important; }
+  .pct { font-size: 13px; font-weight: 500; color: #a1a1aa; margin-top: 4px; text-align: right; }
+  .separator { border: none; border-top: 1px solid #27272a; margin: 16px 0; }
+  .loading {
+    text-align: center; padding: 60px 0; color: #71717a; font-size: 14px;
+    grid-column: 1 / -1;
+  }
+  .spinner {
+    display: inline-block; width: 20px; height: 20px;
+    border: 2px solid #27272a; border-top-color: #60a5fa; border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .controls { text-align: center; margin-bottom: 24px; }
+  .btn {
+    background: #27272a; color: #d4d4d8; border: 1px solid #3f3f46;
+    padding: 6px 16px; border-radius: 6px; font-size: 13px; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn:hover { background: #3f3f46; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .auto-label { font-size: 12px; color: #71717a; margin-left: 12px; }
+  .error-card {
+    background: #1c1012; border-color: #450a0a; text-align: center; padding: 40px; color: #f87171;
+  }
+  .setup-hint {
+    max-width: 600px; margin: 40px auto; text-align: center; color: #71717a;
+    line-height: 1.8; font-size: 14px;
+  }
+  .setup-hint code {
+    background: #27272a; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #d4d4d8;
+  }
+</style>
+</head>
+<body>
+<div class="colors"></div>
+
+<div class="header">
+  <h1>Claude Max Usage Dashboard</h1>
+  <div class="sub">Multiple account usage at a glance</div>
+  <div class="updated">Last update: <span class="time" id="lastUpdated">--</span></div>
+</div>
+
+<div class="controls">
+  <button class="btn" id="refreshBtn" onclick="refresh()">Refresh</button>
+  <label class="auto-label">
+    <input type="checkbox" id="autoRefresh" checked> Auto-refresh every 60s
+  </label>
+</div>
+
+<div class="grid" id="dashboard">
+  <div class="loading"><span class="spinner"></span>Loading...</div>
+</div>
+
+<script>
+const ACCENT = ['#3b82f6','#8b5cf6','#f59e0b','#10b981','#ec4899','#06b6d4','#f97316','#84cc16','#e879f9'];
+let autoTimer = null;
+
+function timeUntil(isoStr) {
+  if (!isoStr) return '';
+  const diff = new Date(isoStr) - Date.now();
+  if (diff <= 0) return 'Resetting soon';
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  if (h > 24) { const d = Math.floor(h / 24); return `Resets in ${d}d ${h % 24}h`; }
+  return `Resets in ${h}h ${m}m`;
+}
+
+function resetDay(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `Resets ${days[d.getDay()]} ${hh}:${mm}`;
+}
+
+function barClass(pct) {
+  if (pct >= 0.8) return 'danger';
+  if (pct >= 0.6) return 'warn';
+  return '';
+}
+
+function statusBadge(status) {
+  if (status === 'allowed') return '<span class="badge badge-ok">OK</span>';
+  if (status === 'rejected') return '<span class="badge badge-error">Limited</span>';
+  return `<span class="badge badge-warn">${status || '?'}</span>`;
+}
+
+function renderCard(key, data, idx) {
+  if (data.error) {
+    return `<div class="card error-card">
+      <div class="card-title">${data.label || key}</div>
+      <p style="margin-top:12px">${data.error}</p>
+    </div>`;
+  }
+  const color = ACCENT[idx % ACCENT.length];
+  const s = data.session, w = data.weekly, sn = data.sonnet;
+
+  const bar = (pct) => {
+    const cls = barClass(pct);
+    const style = cls ? '' : `background:${color}`;
+    return `<div class="bar-bg"><div class="bar-fill ${cls}" style="width:${Math.min(pct*100,100)}%;${style}"></div></div>`;
+  };
+
+  return `<div class="card">
+    <div class="card-header">
+      <div class="card-title" style="color:${color}">${data.label}</div>
+      ${statusBadge(data.status)}
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Current Session</span>
+        <span class="section-meta">${timeUntil(s.resetAt)}</span>
+      </div>
+      ${bar(s.utilization)}
+      <div class="pct">${Math.round(s.utilization*100)}% used</div>
+    </div>
+    <hr class="separator">
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Weekly (All Models)</span>
+        <span class="section-meta">${resetDay(w.resetAt)}</span>
+      </div>
+      ${bar(w.utilization)}
+      <div class="pct">${Math.round(w.utilization*100)}% used</div>
+    </div>
+    <div class="section" style="margin-top:14px">
+      <div class="section-header">
+        <span class="section-title">Sonnet Only</span>
+        <span class="section-meta">${resetDay(sn.resetAt)}</span>
+      </div>
+      ${bar(sn.utilization)}
+      <div class="pct">${Math.round(sn.utilization*100)}% used</div>
+    </div>
+  </div>`;
+}
+
+async function refresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true; btn.textContent = 'Loading...';
+  try {
+    const res = await fetch('/api/usage');
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('dashboard').innerHTML =
+        `<div class="setup-hint">${data.error}</div>`;
+      return;
+    }
+    const keys = Object.keys(data).sort();
+    document.getElementById('dashboard').innerHTML =
+      keys.map((k, i) => renderCard(k, data[k], i)).join('');
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('dashboard').innerHTML =
+      `<div class="loading" style="color:#f87171">Error: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Refresh';
+  }
+}
+
+function setupAutoRefresh() {
+  if (autoTimer) clearInterval(autoTimer);
+  if (document.getElementById('autoRefresh').checked) autoTimer = setInterval(refresh, 60000);
+}
+document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
+setupAutoRefresh();
+refresh();
+</script>
+</body>
+</html>
