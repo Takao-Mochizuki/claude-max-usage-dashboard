@@ -12,13 +12,15 @@ import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 18800;
 const CSRF_TOKEN = randomBytes(32).toString("hex");
-const CACHE_TTL_MS = 30_000; // 30s cache — avoids redundant API calls
+const CACHE_TTL_MS = 30_000;
 
-// In-memory cache
+// In-memory cache + in-flight coalescing
 let usageCache = null;
 let cacheTimestamp = 0;
+let inflightPromise = null;
 
-// Load .env file
+// Load .env file (keys whitelisted to C[1-9]_TOKEN, C[1-9]_LABEL, PORT)
+const ENV_KEY_RE = /^(C[1-9]_(TOKEN|LABEL)|PORT)$/;
 function loadEnv() {
   const envPath = join(__dirname, ".env");
   if (!existsSync(envPath)) return;
@@ -28,6 +30,7 @@ function loadEnv() {
     const eq = trimmed.indexOf("=");
     if (eq < 0) continue;
     const key = trimmed.slice(0, eq).trim();
+    if (!ENV_KEY_RE.test(key)) continue;
     let val = trimmed.slice(eq + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
@@ -37,7 +40,7 @@ function loadEnv() {
 }
 loadEnv();
 
-// Parse accounts from env vars: C1_TOKEN, C1_LABEL, C2_TOKEN, C2_LABEL, ...
+// Parse accounts from env vars
 function getAccounts() {
   const accounts = [];
   for (let i = 1; i <= 9; i++) {
@@ -105,16 +108,13 @@ function parseUsage(headers) {
       disabledReason: get("overage-disabled-reason") || null,
     },
     fallbackPct: parseFloat(get("fallback-percentage") || "0"),
-    fetchedAt: new Date().toISOString(),
   };
 }
 
 const LOCALHOST_RE = /^(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 function verifyRequest(req) {
-  // CSRF token check
   if (req.headers["x-dashboard-csrf"] !== CSRF_TOKEN) return false;
-  // Origin check — reject non-localhost origins
   const origin = req.headers["origin"];
   if (origin) {
     try {
@@ -122,43 +122,49 @@ function verifyRequest(req) {
       if (!LOCALHOST_RE.test(u.host)) return false;
     } catch { return false; }
   }
-  // Host check — reject if Host header is not localhost
   const host = req.headers["host"];
   if (host && !LOCALHOST_RE.test(host)) return false;
   return true;
 }
 
+// In-flight coalescing: concurrent callers share one refresh promise
 async function getUsageData() {
-  // Return cache if fresh
   if (usageCache && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
     return usageCache;
   }
 
-  const accounts = getAccounts();
-  if (accounts.length === 0) {
-    return { _error: "No accounts configured. Set C1_TOKEN in .env file." };
-  }
+  if (inflightPromise) return inflightPromise;
 
-  const results = {};
-  await Promise.all(
-    accounts.map(async (acc) => {
-      const raw = await fetchUsage(acc.token);
-      if (raw.error) {
-        results[acc.key] = { error: `API error (status ${raw.status})`, label: acc.label };
-      } else {
-        results[acc.key] = { ...parseUsage(raw.headers), label: acc.label };
-      }
-    })
-  );
+  inflightPromise = (async () => {
+    const accounts = getAccounts();
+    if (accounts.length === 0) {
+      return { _error: "No accounts configured. Set C1_TOKEN in .env file." };
+    }
 
-  usageCache = results;
-  cacheTimestamp = Date.now();
-  return results;
+    const results = {};
+    await Promise.all(
+      accounts.map(async (acc) => {
+        const raw = await fetchUsage(acc.token);
+        if (raw.error) {
+          results[acc.key] = { error: `API error (status ${raw.status})`, label: acc.label };
+        } else {
+          results[acc.key] = { ...parseUsage(raw.headers), label: acc.label };
+        }
+      })
+    );
+
+    usageCache = results;
+    cacheTimestamp = Date.now();
+    return results;
+  })().finally(() => { inflightPromise = null; });
+
+  return inflightPromise;
 }
 
 const server = createServer(async (req, res) => {
   if (req.url === "/api/usage") {
     res.setHeader("Content-Type", "application/json");
+    res.setHeader("Cache-Control", "no-store");
 
     if (req.method !== "POST") {
       res.statusCode = 405;
@@ -186,7 +192,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Only serve root path
   if (req.url !== "/" && req.url !== "/index.html") {
     res.statusCode = 404;
     res.end("Not found");
@@ -197,6 +202,12 @@ const server = createServer(async (req, res) => {
     .replace("__CSRF_TOKEN__", CSRF_TOKEN);
   res.end(html);
 });
+
+// Hardening: connection timeouts
+server.headersTimeout = 10_000;
+server.requestTimeout = 15_000;
+server.keepAliveTimeout = 5_000;
+server.maxRequestsPerSocket = 100;
 
 server.listen(PORT, "127.0.0.1", () => {
   const accounts = getAccounts();

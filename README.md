@@ -194,8 +194,18 @@ This dashboard implements the following protections:
   Anthropic Organization ID is neither collected nor returned.
 - **エラーサニタイズ**: APIエラーのレスポンス本文を返さない（トークン漏洩防止）
   Raw API error bodies are never returned to the client.
-- **30秒キャッシュ**: 同一データへの連続リクエストはキャッシュから返却。不要なAPI消費を防止
-  30-second server-side cache prevents redundant API calls on rapid refreshes.
+- **30秒キャッシュ + リクエスト合体**: キャッシュ切れ直後でも並列リクエストは1回のAPI呼び出しを共有（in-flight coalescing）。不要なAPI消費を防止
+  30-second cache with in-flight request coalescing — concurrent requests after cache expiry share one upstream call.
+- **接続タイムアウト**: `headersTimeout`/`requestTimeout`/`keepAliveTimeout`/`maxRequestsPerSocket` を明示設定。slowloris耐性
+  Explicit connection timeouts prevent slow-connection resource exhaustion.
+- **.envキーホワイトリスト**: `C[1-9]_TOKEN`、`C[1-9]_LABEL`、`PORT` のみ受け入れ
+  `.env` parser only accepts whitelisted keys.
+
+### 脅威モデルの範囲外 / Out of Scope
+
+同一ホスト上の別プロセスは `GET /` でCSRFトークンを取得し `/api/usage` を呼べる。これはlocalhostツールの構造上の制約であり、同一マシン上に攻撃者がいる場合はダッシュボード以前にシステム全体が危殆化している。Node.js v22.x の最新セキュリティリリースを推奨する。
+
+A local process on the same host can extract the CSRF token from `GET /` and call `/api/usage`. This is inherent to localhost tools — if an attacker has local process access, the system is already compromised beyond this dashboard's scope. Use the latest Node.js v22.x security release.
 
 ---
 
