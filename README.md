@@ -163,16 +163,18 @@ This dashboard implements the following protections:
 
 - **localhost限定**: `127.0.0.1` にのみバインド。LAN上の他デバイスからアクセス不可
   Binds to `127.0.0.1` only. Not accessible from other devices on the network.
-- **POST + CSRFトークン**: `/api/usage` はPOSTのみ受け付け、サーバー起動時に生成されるランダムトークンをヘッダーで検証。外部サイトからの不正呼び出しを防止
-  `/api/usage` accepts POST only with a per-session CSRF token in `x-dashboard-csrf` header. Prevents cross-origin abuse.
-- **Origin検証**: Origin/Hostヘッダーがlocalhostでない場合はリクエストを拒否
-  Rejects requests with non-localhost Origin header.
-- **orgId非公開**: AnthropicのOrganization IDはレスポンスに含めない
-  Anthropic Organization ID is not included in API responses.
+- **POST + CSRFトークン**: `/api/usage` はPOSTのみ受け付け（GETは405）、サーバー起動時に生成されるランダムトークンを `x-dashboard-csrf` ヘッダーで検証。外部サイトからの不正呼び出しを防止
+  `/api/usage` accepts POST only (GET returns 405) with a per-session CSRF token in `x-dashboard-csrf` header. Prevents cross-origin abuse.
+- **Origin + Host 二重検証**: Origin・Hostヘッダーを `new URL()` でパースし、localhostでない場合はリクエストを拒否（403）
+  Both Origin and Host headers are parsed via `new URL()` and rejected if not localhost.
+- **innerHTML排除**: 動的コンテンツは全てDOM API（`createElement` / `textContent`）で構築。innerHTML経由のXSSシンクなし
+  All dynamic content rendered via DOM API (`createElement`/`textContent`). Zero innerHTML usage for user data.
+- **orgId非公開**: AnthropicのOrganization IDは収集・返却しない
+  Anthropic Organization ID is neither collected nor returned.
 - **エラーサニタイズ**: APIエラーのレスポンス本文を返さない（トークン漏洩防止）
   Raw API error bodies are never returned to the client.
-- **XSS防止**: 全ての動的文字列はHTMLエスケープ済み
-  All dynamic strings are HTML-escaped before DOM insertion.
+- **30秒キャッシュ**: 同一データへの連続リクエストはキャッシュから返却。不要なAPI消費を防止
+  30-second server-side cache prevents redundant API calls on rapid refreshes.
 
 ---
 
