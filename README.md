@@ -47,6 +47,27 @@ node server.mjs
 
 ブラウザで `http://localhost:18800` を開く / Open `http://localhost:18800`
 
+### ワンコマンドで起動 / One-command launch
+
+`.zshrc` や `.bashrc` にエイリアスを追加すると便利：
+
+Add an alias to `.zshrc` or `.bashrc` for quick access:
+
+```bash
+# ~/.zshrc に追加 / Add to ~/.zshrc
+alias usage='lsof -ti:18800 | xargs kill 2>/dev/null; node ~/path/to/usage-dashboard/server.mjs & sleep 1 && open http://localhost:18800'
+```
+
+以降は `usage` と打つだけで起動+ブラウザオープン。
+
+After that, just type `usage` to start the server and open the dashboard.
+
+停止 / Stop:
+
+```bash
+kill $(lsof -ti:18800)
+```
+
 ---
 
 ## トークンの取得方法 / How to Get Your Token
