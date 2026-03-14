@@ -12,6 +12,11 @@ import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 18800;
 const CSRF_TOKEN = randomBytes(32).toString("hex");
+const CACHE_TTL_MS = 30_000; // 30s cache — avoids redundant API calls
+
+// In-memory cache
+let usageCache = null;
+let cacheTimestamp = 0;
 
 // Load .env file
 function loadEnv() {
@@ -104,13 +109,51 @@ function parseUsage(headers) {
   };
 }
 
+const LOCALHOST_RE = /^(localhost|127\.0\.0\.1)(:\d+)?$/;
+
 function verifyRequest(req) {
   // CSRF token check
   if (req.headers["x-dashboard-csrf"] !== CSRF_TOKEN) return false;
-  // Origin / Host check — only allow requests from this server
+  // Origin check — reject non-localhost origins
   const origin = req.headers["origin"];
-  if (origin && !origin.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/)) return false;
+  if (origin) {
+    try {
+      const u = new URL(origin);
+      if (!LOCALHOST_RE.test(u.host)) return false;
+    } catch { return false; }
+  }
+  // Host check — reject if Host header is not localhost
+  const host = req.headers["host"];
+  if (host && !LOCALHOST_RE.test(host)) return false;
   return true;
+}
+
+async function getUsageData() {
+  // Return cache if fresh
+  if (usageCache && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+    return usageCache;
+  }
+
+  const accounts = getAccounts();
+  if (accounts.length === 0) {
+    return { _error: "No accounts configured. Set C1_TOKEN in .env file." };
+  }
+
+  const results = {};
+  await Promise.all(
+    accounts.map(async (acc) => {
+      const raw = await fetchUsage(acc.token);
+      if (raw.error) {
+        results[acc.key] = { error: `API error (status ${raw.status})`, label: acc.label };
+      } else {
+        results[acc.key] = { ...parseUsage(raw.headers), label: acc.label };
+      }
+    })
+  );
+
+  usageCache = results;
+  cacheTimestamp = Date.now();
+  return results;
 }
 
 const server = createServer(async (req, res) => {
@@ -128,25 +171,14 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const accounts = getAccounts();
-    if (accounts.length === 0) {
-      res.statusCode = 500;
-      res.end(JSON.stringify({ error: "No accounts configured. Set C1_TOKEN in .env file." }));
-      return;
-    }
     try {
-      const results = {};
-      await Promise.all(
-        accounts.map(async (acc) => {
-          const raw = await fetchUsage(acc.token);
-          if (raw.error) {
-            results[acc.key] = { error: `API error (status ${raw.status})`, label: acc.label };
-          } else {
-            results[acc.key] = { ...parseUsage(raw.headers), label: acc.label };
-          }
-        })
-      );
-      res.end(JSON.stringify(results));
+      const data = await getUsageData();
+      if (data._error) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: data._error }));
+        return;
+      }
+      res.end(JSON.stringify(data));
     } catch (e) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal server error" }));

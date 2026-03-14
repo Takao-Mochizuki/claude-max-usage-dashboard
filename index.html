@@ -58,8 +58,8 @@
   .bar-fill {
     height: 100%; border-radius: 4px; transition: width 0.6s ease;
   }
-  .bar-fill.warn { background: #f59e0b !important; }
-  .bar-fill.danger { background: #ef4444 !important; }
+  .bar-fill.warn { background: #f59e0b; }
+  .bar-fill.danger { background: #ef4444; }
   .pct { font-size: 13px; font-weight: 500; color: #a1a1aa; margin-top: 4px; text-align: right; }
   .separator { border: none; border-top: 1px solid #27272a; margin: 16px 0; }
   .loading {
@@ -112,14 +112,24 @@
 <script>
 const CSRF_TOKEN = '__CSRF_TOKEN__';
 const ACCENT = ['#3b82f6','#8b5cf6','#f59e0b','#10b981','#ec4899','#06b6d4','#f97316','#84cc16','#e879f9'];
-const KNOWN_STATUSES = { allowed: 1, rejected: 1 };
 let autoTimer = null;
 
-function esc(s) {
-  if (typeof s !== 'string') return '';
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+// --- DOM helpers (no innerHTML for dynamic data) ---
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'text') { e.textContent = v; continue; }
+      if (k === 'style' && typeof v === 'object') { Object.assign(e.style, v); continue; }
+      if (k === 'className') { e.className = v; continue; }
+      e.setAttribute(k, v);
+    }
+  }
+  for (const c of children) {
+    if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+    else if (c) e.appendChild(c);
+  }
+  return e;
 }
 
 function timeUntil(isoStr) {
@@ -136,76 +146,69 @@ function resetDay(isoStr) {
   if (!isoStr) return '';
   const d = new Date(isoStr);
   const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `Resets ${days[d.getDay()]} ${hh}:${mm}`;
+  return `Resets ${days[d.getDay()]} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
-function barClass(pct) {
-  if (pct >= 0.8) return 'danger';
-  if (pct >= 0.6) return 'warn';
-  return '';
+function barFillClass(pct) {
+  if (pct >= 0.8) return 'bar-fill danger';
+  if (pct >= 0.6) return 'bar-fill warn';
+  return 'bar-fill';
 }
 
-function statusBadge(status) {
-  if (status === 'allowed') return '<span class="badge badge-ok">OK</span>';
-  if (status === 'rejected') return '<span class="badge badge-error">Limited</span>';
-  // Unknown status — show safe fallback, not raw value
-  return '<span class="badge badge-warn">?</span>';
+function buildBadge(status) {
+  const map = { allowed: ['OK', 'badge badge-ok'], rejected: ['Limited', 'badge badge-error'] };
+  const [text, cls] = map[status] || ['?', 'badge badge-warn'];
+  return el('span', { className: cls, text });
 }
 
-function renderCard(key, data, idx) {
-  if (data.error) {
-    return `<div class="card error-card">
-      <div class="card-title">${esc(data.label || key)}</div>
-      <p style="margin-top:12px">${esc(data.error)}</p>
-    </div>`;
-  }
+function buildBar(pct, color) {
+  const cls = barFillClass(pct);
+  const bg = (pct < 0.6) ? color : undefined;
+  const fill = el('div', { className: cls, style: { width: `${Math.min(pct * 100, 100)}%`, ...(bg ? { background: bg } : {}) } });
+  return el('div', { className: 'bar-bg' }, fill);
+}
+
+function buildSection(title, meta, pct, color) {
+  const header = el('div', { className: 'section-header' },
+    el('span', { className: 'section-title', text: title }),
+    el('span', { className: 'section-meta', text: meta })
+  );
+  const bar = buildBar(pct, color);
+  const pctText = el('div', { className: 'pct', text: `${Math.round(pct * 100)}% used` });
+  return el('div', { className: 'section' }, header, bar, pctText);
+}
+
+function buildCard(data, idx) {
   const color = ACCENT[idx % ACCENT.length];
+
+  if (data.error) {
+    const card = el('div', { className: 'card error-card' },
+      el('div', { className: 'card-title', text: data.label || '?' }),
+      el('p', { style: { marginTop: '12px' }, text: data.error })
+    );
+    return card;
+  }
+
   const s = data.session, w = data.weekly, sn = data.sonnet;
 
-  const bar = (pct) => {
-    const cls = barClass(pct);
-    const style = cls ? '' : `background:${color}`;
-    return `<div class="bar-bg"><div class="bar-fill ${cls}" style="width:${Math.min(pct*100,100)}%;${style}"></div></div>`;
-  };
+  const cardHeader = el('div', { className: 'card-header' },
+    el('div', { className: 'card-title', style: { color }, text: data.label }),
+    buildBadge(data.status)
+  );
 
-  return `<div class="card">
-    <div class="card-header">
-      <div class="card-title" style="color:${color}">${esc(data.label)}</div>
-      ${statusBadge(data.status)}
-    </div>
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Current Session</span>
-        <span class="section-meta">${timeUntil(s.resetAt)}</span>
-      </div>
-      ${bar(s.utilization)}
-      <div class="pct">${Math.round(s.utilization*100)}% used</div>
-    </div>
-    <hr class="separator">
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Weekly (All Models)</span>
-        <span class="section-meta">${resetDay(w.resetAt)}</span>
-      </div>
-      ${bar(w.utilization)}
-      <div class="pct">${Math.round(w.utilization*100)}% used</div>
-    </div>
-    <div class="section" style="margin-top:14px">
-      <div class="section-header">
-        <span class="section-title">Sonnet Only</span>
-        <span class="section-meta">${resetDay(sn.resetAt)}</span>
-      </div>
-      ${bar(sn.utilization)}
-      <div class="pct">${Math.round(sn.utilization*100)}% used</div>
-    </div>
-  </div>`;
+  const sessionSection = buildSection('Current Session', timeUntil(s.resetAt), s.utilization, color);
+  const sep = el('hr', { className: 'separator' });
+  const weeklySection = buildSection('Weekly (All Models)', resetDay(w.resetAt), w.utilization, color);
+  const sonnetSection = buildSection('Sonnet Only', resetDay(sn.resetAt), sn.utilization, color);
+  sonnetSection.style.marginTop = '14px';
+
+  return el('div', { className: 'card' }, cardHeader, sessionSection, sep, weeklySection, sonnetSection);
 }
 
 async function refresh() {
   const btn = document.getElementById('refreshBtn');
   btn.disabled = true; btn.textContent = 'Loading...';
+  const grid = document.getElementById('dashboard');
   try {
     const res = await fetch('/api/usage', {
       method: 'POST',
@@ -213,18 +216,20 @@ async function refresh() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+
+    grid.textContent = ''; // clear safely
+
     if (data.error) {
-      document.getElementById('dashboard').innerHTML =
-        `<div class="setup-hint">${esc(data.error)}</div>`;
+      grid.appendChild(el('div', { className: 'setup-hint', text: data.error }));
       return;
     }
     const keys = Object.keys(data).sort();
-    document.getElementById('dashboard').innerHTML =
-      keys.map((k, i) => renderCard(k, data[k], i)).join('');
+    keys.forEach((k, i) => grid.appendChild(buildCard(data[k], i)));
     document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
   } catch (e) {
-    document.getElementById('dashboard').innerHTML =
-      `<div class="loading" style="color:#f87171">Error: ${esc(e.message)}</div>`;
+    grid.textContent = '';
+    const msg = el('div', { className: 'loading', style: { color: '#f87171' }, text: `Error: ${e.message}` });
+    grid.appendChild(msg);
   } finally {
     btn.disabled = false; btn.textContent = 'Refresh';
   }
