@@ -118,6 +118,12 @@
 const ACCENT = ['#3b82f6','#8b5cf6','#f59e0b','#10b981','#ec4899','#06b6d4','#f97316','#84cc16','#e879f9'];
 let autoTimer = null;
 
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
 function timeUntil(isoStr) {
   if (!isoStr) return '';
   const diff = new Date(isoStr) - Date.now();
@@ -152,8 +158,8 @@ function statusBadge(status) {
 function renderCard(key, data, idx) {
   if (data.error) {
     return `<div class="card error-card">
-      <div class="card-title">${data.label || key}</div>
-      <p style="margin-top:12px">${data.error}</p>
+      <div class="card-title">${esc(data.label || key)}</div>
+      <p style="margin-top:12px">${esc(data.error)}</p>
     </div>`;
   }
   const color = ACCENT[idx % ACCENT.length];
@@ -167,7 +173,7 @@ function renderCard(key, data, idx) {
 
   return `<div class="card">
     <div class="card-header">
-      <div class="card-title" style="color:${color}">${data.label}</div>
+      <div class="card-title" style="color:${color}">${esc(data.label)}</div>
       ${statusBadge(data.status)}
     </div>
     <div class="section">
@@ -206,7 +212,7 @@ async function refresh() {
     const data = await res.json();
     if (data.error) {
       document.getElementById('dashboard').innerHTML =
-        `<div class="setup-hint">${data.error}</div>`;
+        `<div class="setup-hint">${esc(data.error)}</div>`;
       return;
     }
     const keys = Object.keys(data).sort();

@@ -79,7 +79,6 @@ function parseUsage(headers) {
   const get = (key) => headers[`anthropic-ratelimit-unified-${key}`];
   const ts = (v) => (v ? new Date(Number(v) * 1000).toISOString() : null);
   return {
-    orgId: headers["anthropic-organization-id"] || null,
     status: get("status"),
     session: {
       utilization: parseFloat(get("5h-utilization") || "0"),
@@ -121,7 +120,7 @@ const server = createServer(async (req, res) => {
         accounts.map(async (acc) => {
           const raw = await fetchUsage(acc.token);
           if (raw.error) {
-            results[acc.key] = { error: `API error ${raw.status}: ${raw.message}`, label: acc.label };
+            results[acc.key] = { error: `API error (status ${raw.status})`, label: acc.label };
           } else {
             results[acc.key] = { ...parseUsage(raw.headers), label: acc.label };
           }
@@ -135,11 +134,17 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Only serve root path
+  if (req.url !== "/" && req.url !== "/index.html") {
+    res.statusCode = 404;
+    res.end("Not found");
+    return;
+  }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(readFileSync(join(__dirname, "index.html"), "utf-8"));
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   const accounts = getAccounts();
   console.log(`Claude Max Usage Dashboard: http://localhost:${PORT}`);
   console.log(`Accounts: ${accounts.map((a) => a.label).join(", ") || "(none — set C1_TOKEN in .env)"}`);
