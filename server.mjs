@@ -111,20 +111,27 @@ function parseUsage(headers) {
   };
 }
 
-const LOCALHOST_RE = /^(localhost|127\.0\.0\.1)(:\d+)?$/;
+const LOOPBACK_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
+
+function isAllowedHost(host) {
+  return typeof host === "string" && LOOPBACK_HOSTS.has(host.toLowerCase());
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  try {
+    const u = new URL(origin);
+    return (u.protocol === "http:" || u.protocol === "https:")
+      && LOOPBACK_HOSTS.has(u.host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
 
 function verifyRequest(req) {
+  if (!isAllowedHost(req.headers["host"])) return false;
   if (req.headers["x-dashboard-csrf"] !== CSRF_TOKEN) return false;
-  const origin = req.headers["origin"];
-  if (origin) {
-    try {
-      const u = new URL(origin);
-      if (!LOCALHOST_RE.test(u.host)) return false;
-    } catch { return false; }
-  }
-  const host = req.headers["host"];
-  if (host && !LOCALHOST_RE.test(host)) return false;
-  return true;
+  return isAllowedOrigin(req.headers["origin"]);
 }
 
 // In-flight coalescing: concurrent callers share one refresh promise
